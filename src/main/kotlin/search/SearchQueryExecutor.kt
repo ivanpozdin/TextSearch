@@ -1,6 +1,6 @@
-package searchQueryExecutor
+package search
 
-import indexBuilder.IndexBuilder
+import index.Index
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -10,10 +10,13 @@ import kotlin.io.path.pathString
 
 data class SearchResult(val path: String, val lineNumber: Int)
 
-class SearchQueryExecutor(private val index: IndexBuilder) {
+class SearchQueryExecutor(private val index: Index) {
+    companion object {
+        const val TRIGRAM_LENGTH = 3
+    }
 
     fun getFilesAndLinesWith(string: String): List<SearchResult> = runBlocking(Dispatchers.Default) {
-        require(string.length >= 3)
+        require(string.length >= TRIGRAM_LENGTH)
 
         val trigrams = getTrigrams(string)
         val trigramsDocs = trigrams.map { trigram -> index.getDocuments(trigram) ?: emptySet() }
@@ -45,8 +48,8 @@ class SearchQueryExecutor(private val index: IndexBuilder) {
 
     private fun getTrigrams(string: String): List<String> {
         val trigrams = mutableListOf<String>()
-        for (i in 3..string.length) {
-            trigrams.add(string.substring(i - 3, i))
+        for (i in TRIGRAM_LENGTH..string.length) {
+            trigrams.add(string.substring(i - TRIGRAM_LENGTH, i))
         }
         return trigrams
     }

@@ -1,13 +1,16 @@
-import indexBuilder.IndexBuilder
-import searchQueryExecutor.SearchQueryExecutor
+import index.IndexBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import search.SearchQueryExecutor
 
 fun main() {
     val directory = "/Users/ivanpozdin/KotlinProjects/TextSearch/SampleDirectory"
-    val indexBuilder = IndexBuilder(directory)
-
-    val searchQueryExecutor = SearchQueryExecutor(indexBuilder)
-    searchQueryExecutor.getFilesAndLinesWith("of ").forEach {
-        println(it)
+    runBlocking(Dispatchers.Default) {
+        val indexBuilder = IndexBuilder(directory, cs = this)
+        val index = indexBuilder.build()
+        val searchQueryExecutor = SearchQueryExecutor(index)
+        searchQueryExecutor.getFilesAndLinesWith("of ").forEach {
+            println(it)
+        }
     }
 }
-

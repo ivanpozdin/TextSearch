@@ -1,23 +1,21 @@
-package indexBuilder
+package index
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.forEachLine
 
-class IndexBuilder(private val directory: String) {
+class IndexBuilder(private val directory: String, private val cs: CoroutineScope) {
     private val indexTable: ConcurrentHashMap<String, ConcurrentHashMap.KeySetView<Path, Boolean>> = ConcurrentHashMap()
 
     companion object {
         const val TRIGRAM_LENGTH = 3
-    }
-
-    init {
-        index()
     }
 
     private fun indexFile(file: Path) {
@@ -31,24 +29,19 @@ class IndexBuilder(private val directory: String) {
         }
     }
 
-    private fun index() {
+    suspend fun build(): Index {
         val paths = mutableListOf<Path>()
 
-        Files.walk(Paths.get(directory)).use { stream ->
+        withContext(Dispatchers.IO) {
+            Files.walk(Paths.get(directory))
+        }.use { stream ->
             stream.filter { Files.isRegularFile(it) }.forEach { path ->
                 paths.add(path)
             }
         }
-        runBlocking(Dispatchers.Default) {
-            paths.forEach { path ->
-                launch {
-                    indexFile(path)
-                }
-            }
-        }
-    }
-
-    fun getDocuments(trigram: String): Set<Path>? {
-        return indexTable[trigram]?.toSet()
+        paths.map { path ->
+            cs.async { indexFile(path) }
+        }.awaitAll()
+        return Index(indexTable)
     }
 }
