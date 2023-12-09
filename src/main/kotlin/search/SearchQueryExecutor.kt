@@ -19,6 +19,7 @@ class SearchQueryExecutor(private val index: Index) {
         require(string.length >= TRIGRAM_LENGTH)
 
         val trigrams = getTrigrams(string)
+
         val trigramsDocs = trigrams.map { trigram -> index.getDocuments(trigram) ?: emptySet() }
 
         val documentsIntersection = intersect(trigramsDocs)
@@ -35,13 +36,17 @@ class SearchQueryExecutor(private val index: Index) {
     }
 
     private fun searchStringInFile(path: Path, string: String): SearchResult? {
-        var lineNumber = 0
+        try {
+            var lineNumber = 0
 
-        path.forEachLine { line ->
-            lineNumber++
-            if (line.contains(string)) {
-                return SearchResult(path.pathString, lineNumber)
+            path.forEachLine { line ->
+                lineNumber++
+                if (line.contains(string)) {
+                    return SearchResult(path.pathString, lineNumber)
+                }
             }
+        } catch (_: java.nio.charset.MalformedInputException) {
+            return null
         }
         return null
     }
@@ -56,7 +61,7 @@ class SearchQueryExecutor(private val index: Index) {
 
     private fun intersect(sets: List<Set<Path>>): Set<Path> {
         if (sets.isEmpty()) throw IndexOutOfBoundsException("lists must have at list 1 list in it.")
-        if (sets.size == 1) return sets[0]
+        if (sets.size == 1) return sets.first()
 
         return sets.reduce { intersection, set ->
             intersection.intersect(set)
