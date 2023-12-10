@@ -6,44 +6,60 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.io.path.forEachLine
+import kotlin.io.path.*
 
 class IndexBuilder(private val directory: String, private val cs: CoroutineScope) {
     private val indexTable: ConcurrentHashMap<String, ConcurrentHashMap.KeySetView<Path, Boolean>> = ConcurrentHashMap()
-    private var filesNumber: Int = 0
 
     companion object {
         const val TRIGRAM_LENGTH = 3
+        const val PROGRESS_BAR_LENGTH = 10
     }
 
-    private fun indexFile(file: Path) {
-        file.forEachLine { line ->
-            if (line.length < TRIGRAM_LENGTH) return@forEachLine
-            for (i in TRIGRAM_LENGTH..line.length) {
-                val trigram = line.substring(i - TRIGRAM_LENGTH, i)
-                val set = indexTable.computeIfAbsent(trigram) { ConcurrentHashMap.newKeySet() }
-                set.add(file)
+    private suspend fun indexFile(file: Path, progressChannel: Channel<Boolean>) {
+        try {
+            file.useLines { sequence ->
+                sequence.iterator().forEachRemaining { line ->
+                    if (line.length < TRIGRAM_LENGTH) return@forEachRemaining
+                    for (i in TRIGRAM_LENGTH..line.length) {
+                        val trigram = line.substring(i - TRIGRAM_LENGTH, i)
+                        val set = indexTable.computeIfAbsent(trigram) {
+                            ConcurrentHashMap.newKeySet()
+                        }
+                        set.add(file)
+                    }
+                }
             }
+            progressChannel.send(true)
+        } catch (_: java.nio.charset.MalformedInputException) {
         }
     }
 
+
     @OptIn(DelicateCoroutinesApi::class)
-    private suspend fun printProgress(channel: Channel<Boolean>) {
+    private suspend fun printProgress(channel: Channel<Boolean>, filesNumber: Int) {
         cs.launch {
-            var processedFiles = 0
-            while (!channel.isClosedForReceive) {
-                try {
+            try {
+                var processedFiles = 0
+                while (cs.isActive && !channel.isClosedForReceive) {
                     channel.receive()
                     processedFiles++
-                    val progress = Math.round(processedFiles / filesNumber.toDouble() * 100).toInt()
-                    val progressBar = "#".repeat(progress / 10) + "_".repeat(10 - progress / 10)
 
-                    print("Index progress: $progressBar $progress%\r")
-                } catch (_: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
+                    val progressPercentage = Math.round(processedFiles / filesNumber.toDouble() * 100).toInt()
+
+                    val processedPart = "#".repeat(progressPercentage / PROGRESS_BAR_LENGTH)
+                    val remainingPart = "_".repeat(PROGRESS_BAR_LENGTH - progressPercentage / PROGRESS_BAR_LENGTH)
+                    val progressBar = processedPart + remainingPart
+
+                    print("Indexing progress: $progressBar $progressPercentage%\r")
                 }
-//                delay(5)
+                if (cs.isActive) {
+                    println("Indexing finished: ${"#".repeat(10)} 100%")
+                } else {
+                    println("Indexing was cancelled.")
+                }
+            } catch (_: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
             }
-            println("Index progress: ${"#".repeat(10)} 100%")
         }
     }
 
@@ -57,25 +73,21 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
                 paths.add(path)
             }
         }
-        filesNumber = paths.size
         return paths.toList()
     }
 
     suspend fun build(): Index {
         val paths = getPaths()
         val progressChannel = Channel<Boolean>()
-        printProgress(progressChannel)
+        printProgress(progressChannel, paths.size)
 
         paths.map { path ->
             cs.async {
-                try {
-                    indexFile(path)
-                    progressChannel.send(true)
-                } catch (_: java.nio.charset.MalformedInputException) {
-                }
+                indexFile(path, progressChannel)
             }
         }.awaitAll()
         progressChannel.close()
+
         return Index(indexTable)
     }
 }
