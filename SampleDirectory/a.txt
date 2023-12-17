@@ -1,0 +1,7 @@
+Trigram search is a method of searching for text
+when the exact syntax or spelling of the target object is not precisely known[1] or
+when queries may be regular expressions.[2]
+
+
+ It finds objects which match the maximum number of three consecutive character strings
+ (i.e. trigrams) in the entered search terms, which are generally near matches.prefix

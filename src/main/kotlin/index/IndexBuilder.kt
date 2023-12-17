@@ -11,37 +11,51 @@ import kotlin.io.path.*
 class IndexBuilder(private val directory: String, private val cs: CoroutineScope) {
     private val indexTable: ConcurrentHashMap<String, ConcurrentHashMap.KeySetView<Path, Boolean>> = ConcurrentHashMap()
 
+    @Volatile
+    private var keepIndexing = true
+
     companion object {
         const val TRIGRAM_LENGTH = 3
         const val PROGRESS_BAR_LENGTH = 10
+        const val CANCEL_MESSAGE = "Indexing was cancelled."
+    }
+
+    fun cancel() {
+        keepIndexing = false
     }
 
     private suspend fun indexFile(file: Path, progressChannel: Channel<Boolean>) {
         try {
             file.useLines { sequence ->
-                sequence.iterator().forEachRemaining { line ->
-                    if (line.length < TRIGRAM_LENGTH) return@forEachRemaining
-                    for (i in TRIGRAM_LENGTH..line.length) {
-                        val trigram = line.substring(i - TRIGRAM_LENGTH, i)
-                        val set = indexTable.computeIfAbsent(trigram) {
-                            ConcurrentHashMap.newKeySet()
+                try {
+                    sequence.iterator().forEachRemaining { line ->
+                        if (line.length < TRIGRAM_LENGTH) return@forEachRemaining
+                        for (i in TRIGRAM_LENGTH..line.length) {
+                            val trigram = line.substring(i - TRIGRAM_LENGTH, i)
+                            val set = indexTable.computeIfAbsent(trigram) {
+                                ConcurrentHashMap.newKeySet()
+                            }
+                            set.add(file)
                         }
-                        set.add(file)
+                        if (!keepIndexing) {
+                            throw CancellationException(CANCEL_MESSAGE)
+                        }
                     }
+                } catch (_: CancellationException) {
                 }
             }
-            progressChannel.send(true)
+            if (keepIndexing) progressChannel.send(true)
         } catch (_: java.nio.charset.MalformedInputException) {
         }
     }
 
 
     @OptIn(DelicateCoroutinesApi::class)
-    private suspend fun printProgress(channel: Channel<Boolean>, filesNumber: Int) {
-        cs.launch {
+    private suspend fun printProgress(channel: Channel<Boolean>, filesNumber: Int): Job {
+        return cs.launch {
             try {
                 var processedFiles = 0
-                while (cs.isActive && !channel.isClosedForReceive) {
+                while (keepIndexing && !channel.isClosedForReceive) {
                     channel.receive()
                     processedFiles++
 
@@ -50,15 +64,16 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
                     val processedPart = "#".repeat(progressPercentage / PROGRESS_BAR_LENGTH)
                     val remainingPart = "_".repeat(PROGRESS_BAR_LENGTH - progressPercentage / PROGRESS_BAR_LENGTH)
                     val progressBar = processedPart + remainingPart
-
                     print("Indexing progress: $progressBar $progressPercentage%\r")
                 }
-                if (cs.isActive) {
-                    println("Indexing finished: ${"#".repeat(10)} 100%")
-                } else {
-                    println("Indexing was cancelled.")
-                }
+
             } catch (_: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
+            } finally {
+                if (keepIndexing) {
+                    println("Indexing finished: ${"#".repeat(PROGRESS_BAR_LENGTH)} 100%")
+                } else {
+                    println(CANCEL_MESSAGE)
+                }
             }
         }
     }
@@ -79,7 +94,7 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
     suspend fun build(): Index {
         val paths = getPaths()
         val progressChannel = Channel<Boolean>()
-        printProgress(progressChannel, paths.size)
+        val progressPrinting = printProgress(progressChannel, paths.size)
 
         paths.map { path ->
             cs.async {
@@ -87,7 +102,8 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
             }
         }.awaitAll()
         progressChannel.close()
-
+        progressPrinting.join()
+        if (!keepIndexing) throw CancellationException(CANCEL_MESSAGE)
         return Index(indexTable)
     }
 }
