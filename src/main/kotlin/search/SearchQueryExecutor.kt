@@ -10,11 +10,22 @@ import kotlin.io.path.pathString
 
 data class SearchResult(val path: String, val lineNumber: Int)
 
+/**
+ * Can search for words of length >= 3 in the directory by providing an Index instance.
+ *
+ * @param index is an instance of Index class for searching trigrams in directory.
+ */
 class SearchQueryExecutor(private val index: Index) {
     companion object {
         const val TRIGRAM_LENGTH = 3
     }
 
+    /**
+     * Find a list of files with line numbers where a given string occurs.
+     *
+     * @param string occurrences of which are needed to be found.
+     * @return a list of SearchResult's with a file path and a line number of the string occurrence.
+     */
     fun getFilesAndLinesWith(string: String): List<SearchResult> = runBlocking(Dispatchers.Default) {
         require(string.length >= TRIGRAM_LENGTH)
 

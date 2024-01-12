@@ -4,7 +4,7 @@ import search.SearchQueryExecutor
 import kotlin.io.path.Path
 
 fun main() {
-    val directory = "/Users/ivanpozdin/KotlinProjects/TextSearch/SampleDirectory"
+    val directory = "SampleDirectory"
     runBlocking {
         val cs = CoroutineScope(Dispatchers.Default)
         val indexBuilder = IndexBuilder(directory, cs)

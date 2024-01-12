@@ -8,6 +8,14 @@ import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.*
 
+/**
+ * Builds a text index for a given folder in a file system.
+ *
+ * @property directory for indexing.
+ * @property cs is a coroutine scope, where class' coroutines will be executed.
+ *
+ * @constructor creates IndexBuilder for given directory, which wil be ready to index on the build() method.
+ */
 class IndexBuilder(private val directory: String, private val cs: CoroutineScope) {
     private val indexTable: ConcurrentHashMap<String, ConcurrentHashMap.KeySetView<Path, Boolean>> = ConcurrentHashMap()
 
@@ -15,11 +23,14 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
     private var keepIndexing = true
 
     companion object {
-        const val TRIGRAM_LENGTH = 3
-        const val PROGRESS_BAR_LENGTH = 10
-        const val CANCEL_MESSAGE = "Indexing was cancelled."
+        private const val TRIGRAM_LENGTH = 3
+        private const val PROGRESS_BAR_LENGTH = 10
+        private const val CANCEL_MESSAGE = "Indexing was cancelled."
     }
 
+    /**
+     * Cancels indexing.
+     */
     fun cancel() {
         keepIndexing = false
     }
@@ -91,17 +102,26 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
         return paths.toList()
     }
 
+    /**
+     * Indexes directory.
+     *
+     * @return is an Index instance, which is indexing result.
+     * @throws CancellationException when the indexing is cancelled.
+     */
     suspend fun build(): Index {
         val paths = getPaths()
         val progressChannel = Channel<Boolean>()
         val progressPrinting = printProgress(progressChannel, paths.size)
+        try {
+            paths.map { path ->
+                cs.async {
+                    indexFile(path, progressChannel)
+                }
+            }.awaitAll()
+        } finally {
+            progressChannel.close()
+        }
 
-        paths.map { path ->
-            cs.async {
-                indexFile(path, progressChannel)
-            }
-        }.awaitAll()
-        progressChannel.close()
         progressPrinting.join()
         if (!keepIndexing) throw CancellationException(CANCEL_MESSAGE)
         return Index(indexTable)
