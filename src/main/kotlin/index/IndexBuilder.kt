@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.io.path.*
+import kotlin.io.path.useLines
 
 /**
  * Builds a text index for a given folder in a file system.
@@ -121,7 +121,6 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
         } finally {
             progressChannel.close()
         }
-
         progressPrinting.join()
         if (!keepIndexing) throw CancellationException(CANCEL_MESSAGE)
         return Index(indexTable)
