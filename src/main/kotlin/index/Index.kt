@@ -1,14 +1,14 @@
 package index
 
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Result of directory indexing. Can be used to search for files containing given trigram.
  *
  * @param indexTable is a hashtable with trigrams and files where trigrams are found.
  */
-class Index(private val indexTable: ConcurrentHashMap<String, ConcurrentHashMap.KeySetView<Path, Boolean>>) {
+
+class Index(private val indexTable: Map<String, Set<Path>>) {
     /**
      * Find occurrences of given trigram.
      *
