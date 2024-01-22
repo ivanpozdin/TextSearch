@@ -2,11 +2,13 @@ package index
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.useLines
+import kotlin.time.Duration.Companion.nanoseconds
 
 /**
  * Builds a text index for a given folder in a file system.
@@ -23,9 +25,11 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
     private var keepIndexing = true
 
     companion object {
-        private const val TRIGRAM_LENGTH = 3
+        const val TRIGRAM_LENGTH = 3
         private const val PROGRESS_BAR_LENGTH = 10
         private const val CANCEL_MESSAGE = "Indexing was cancelled."
+        private const val UPDATE_PROGRESS_PERCENT = 0.03
+        private const val HUNDRED = 100
     }
 
     /**
@@ -60,33 +64,42 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
         }
     }
 
+    private val flow = MutableStateFlow(0)
 
     @OptIn(DelicateCoroutinesApi::class)
-    private suspend fun printProgress(channel: Channel<Boolean>, filesNumber: Int): Job {
-        return cs.launch {
-            try {
-                var processedFiles = 0
-                while (keepIndexing && !channel.isClosedForReceive) {
-                    channel.receive()
-                    processedFiles++
+    private suspend fun updateProgress(channel: Channel<Boolean>, filesNumber: Int): Job = cs.launch {
+        try {
+            var processedFiles = 0
+            while (keepIndexing && !channel.isClosedForReceive) {
+                channel.receive()
+                processedFiles++
 
-                    val progressPercentage = Math.round(processedFiles / filesNumber.toDouble() * 100).toInt()
-
-                    val processedPart = "#".repeat(progressPercentage / PROGRESS_BAR_LENGTH)
-                    val remainingPart = "_".repeat(PROGRESS_BAR_LENGTH - progressPercentage / PROGRESS_BAR_LENGTH)
-                    val progressBar = processedPart + remainingPart
-                    print("Indexing progress: $progressBar $progressPercentage%\r")
-                }
-
-            } catch (_: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
-            } finally {
-                if (keepIndexing) {
-                    println("Indexing finished: ${"#".repeat(PROGRESS_BAR_LENGTH)} 100%")
-                } else {
-                    println(CANCEL_MESSAGE)
+                if (processedFiles - flow.value >= UPDATE_PROGRESS_PERCENT * filesNumber) {
+                    flow.emit(processedFiles)
                 }
             }
+        } catch (_: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
         }
+    }
+
+    private suspend fun printProgress(filesNumber: Int): Job = cs.launch {
+        try {
+            flow.collect { processedFiles ->
+                val progressPercentage = Math.round(HUNDRED * processedFiles / filesNumber.toDouble()).toInt()
+                val processedPart = "#".repeat(progressPercentage / PROGRESS_BAR_LENGTH)
+                val remainingPart = "_".repeat(PROGRESS_BAR_LENGTH - progressPercentage / PROGRESS_BAR_LENGTH)
+                val progressBar = processedPart + remainingPart
+
+                print("Indexing progress: $progressBar $progressPercentage%\r")
+            }
+        } finally {
+            if (keepIndexing) {
+                println("Indexing finished: ${"#".repeat(PROGRESS_BAR_LENGTH)} 100%")
+            } else {
+                println(CANCEL_MESSAGE)
+            }
+        }
+        // todo print progress once a second
     }
 
     private suspend fun getPaths(): List<Path> {
@@ -111,7 +124,8 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
     suspend fun build(): Index {
         val paths = getPaths()
         val progressChannel = Channel<Boolean>()
-        val progressPrinting = printProgress(progressChannel, paths.size)
+        val progressUpdating = updateProgress(progressChannel, paths.size)
+        val progressPrinting = printProgress(paths.size)
         try {
             paths.map { path ->
                 cs.async {
@@ -121,7 +135,9 @@ class IndexBuilder(private val directory: String, private val cs: CoroutineScope
         } finally {
             progressChannel.close()
         }
-        progressPrinting.join()
+        progressUpdating.join()
+        progressPrinting.cancelAndJoin()
+
         if (!keepIndexing) throw CancellationException(CANCEL_MESSAGE)
         return Index(indexTable)
     }

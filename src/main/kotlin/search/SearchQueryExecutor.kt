@@ -1,6 +1,7 @@
 package search
 
 import index.Index
+import index.IndexBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -22,10 +23,6 @@ data class SearchResult(val path: String, val lineNumber: Int)
  * @param index is an instance of Index class for searching trigrams in directory.
  */
 class SearchQueryExecutor(private val index: Index) {
-    companion object {
-        private const val TRIGRAM_LENGTH = 3
-    }
-
     /**
      * Find a list of files with line numbers where a given string occurs.
      *
@@ -33,11 +30,11 @@ class SearchQueryExecutor(private val index: Index) {
      * @return a list of SearchResult's with a file path and a line number of the string occurrence.
      */
     fun getFilesAndLinesWith(string: String): List<SearchResult> = runBlocking(Dispatchers.Default) {
-        require(string.length >= TRIGRAM_LENGTH)
+        require(string.length >= IndexBuilder.TRIGRAM_LENGTH)
 
         val trigrams = getTrigrams(string)
 
-        val trigramsDocs = trigrams.map { trigram -> index.getDocuments(trigram) ?: emptySet() }
+        val trigramsDocs = trigrams.map { trigram -> index.getDocuments(trigram) }
 
         val documentsIntersection = intersect(trigramsDocs)
         if (documentsIntersection.isEmpty()) return@runBlocking listOf()
@@ -62,23 +59,22 @@ class SearchQueryExecutor(private val index: Index) {
                     return SearchResult(path.pathString, lineNumber)
                 }
             }
+            // If a file has unsupported format, then skip it.
         } catch (_: java.nio.charset.MalformedInputException) {
-            return null
         }
         return null
     }
 
     private fun getTrigrams(string: String): List<String> {
         val trigrams = mutableListOf<String>()
-        for (i in TRIGRAM_LENGTH..string.length) {
-            trigrams.add(string.substring(i - TRIGRAM_LENGTH, i))
+        for (i in IndexBuilder.TRIGRAM_LENGTH..string.length) {
+            trigrams.add(string.substring(i - IndexBuilder.TRIGRAM_LENGTH, i))
         }
         return trigrams
     }
 
     private fun intersect(sets: List<Set<Path>>): Set<Path> {
         if (sets.isEmpty()) throw IndexOutOfBoundsException("lists must have at list 1 list in it.")
-        if (sets.size == 1) return sets.first()
 
         return sets.reduce { intersection, set ->
             intersection.intersect(set)
